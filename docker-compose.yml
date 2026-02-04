@@ -1,74 +1,532 @@
-networks:
-  netpulse-auth-network:
-    driver: bridge
-
-volumes:
-  postgres_data:
-  keycloak_data:
+# NetPulse Docker Compose Configuration
+#
+# Required Environment Variables:
+#   NETPULSE_HOST_IP - Host machine IP address (default: 10.4.160.240)
+#
+# Example: NETPULSE_HOST_IP=192.168.1.100 docker compose up -d
 
 services:
-  # PostgreSQL for Kong and Keycloak
+  # PostgreSQL Database for NMS and NetBox
   postgres:
-    image: postgres:15-alpine
-    container_name: netpulse-auth-postgres
+    image: netpulse/postgres:${VERSION:-latest}
+    container_name: netpulse-postgres
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin123
-      POSTGRES_DB: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-netpulse}
+      POSTGRES_USER: ${POSTGRES_USER:-netpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netpulse123}
+      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES:-netbox,nms,keycloak}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres-data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     networks:
-      - netpulse-auth-network
+      - netpulse-network
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netpulse}" ]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Keycloak Authentication Server (built from local source)
-  keycloak:
-    build:
-      context: ./keycloak-source
-      dockerfile: Dockerfile
-    image: netpulse-keycloak:local
-    container_name: netpulse-auth-keycloak
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak123
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin123
-      KC_HEALTH_ENABLED: true
-      KC_METRICS_ENABLED: true
-      KC_HTTP_ENABLED: true
-      KC_HOSTNAME_STRICT: false
-      KC_PROXY: edge
-    command: start-dev --import-realm
+  # Redis for caching and message queue
+  redis:
+    image: netpulse/redis:${VERSION:-latest}
+    container_name: netpulse-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
     volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
-    # No ports exposed - accessed only through Kong
+      - redis-data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     networks:
-      - netpulse-auth-network
+      - netpulse-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # NMS Server - Network Management System Server
+  nms-server:
+    build:
+      context: ./core/netpulse-nms/netpulse-nms-server
+      dockerfile: Dockerfile
+      network: host
+    image: netpulse/nms-server:${VERSION:-latest}
+    container_name: netpulse-nms-server
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      netbox:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netbox
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-netpulse}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-netpulse123}
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      SERVER_PORT: 8081
+      # NetBox Integration
+      NETBOX_URL: http://netbox:8000
+    volumes:
+      # - ./config/netpulse-nms/server-application.properties:/usr/app/application.properties:ro
+      - nms-server-logs:/var/log/nms
+    ports:
+      - "${NMS_SERVER_PORT:-8081}:8081"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+
+  # NetBox - Device Manager Main Application
+  netbox:
+    build:
+      context: .
+      dockerfile: docker/netpulse-device-mngr/Dockerfile
+      network: host
+    image: netpulse/device-manager:${VERSION:-latest}
+    container_name: netpulse-netbox
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Service identification
+      SERVICE_NAME: netbox
+
+      # Database settings
+      DB_NAME: ${NETBOX_DB_NAME:-netbox}
+      DB_USER: ${NETBOX_DB_USER:-netbox}
+      DB_PASSWORD: ${NETBOX_DB_PASSWORD:-netbox123}
+      DB_HOST: postgres
+      DB_PORT: 5432
+
+      # Redis settings
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      REDIS_DATABASE: 0
+      REDIS_CACHE_DATABASE: 1
+
+      # NetBox settings
+      SECRET_KEY: ${NETBOX_SECRET_KEY:-cZ75pDscpvtjpWi-yduAbsMg_YZZg-8ulXTW7VxlcAuiGFrNJ9mfnB9brn_3KtocgWU}
+      ALLOWED_HOSTS: ${NETBOX_ALLOWED_HOSTS:-*}
+      DEBUG: ${NETBOX_DEBUG:-true}
+      TIME_ZONE: ${TIME_ZONE:-UTC}
+
+      # Superuser settings (for auto-creation)
+      SUPERUSER_NAME: ${SUPERUSER_NAME:-admin}
+      SUPERUSER_EMAIL: ${SUPERUSER_EMAIL:-admin@example.com}
+      SUPERUSER_PASSWORD: ${SUPERUSER_PASSWORD:-admin}
+
+      # Webhook Server1 settings (no authentication)
+      SERVER1_NAME: ${SERVER1_NAME:-Server1}
+      SERVER1_WEBHOOK_NAME: ${SERVER1_WEBHOOK_NAME:-DeviceWebHook_Server1}
+      SERVER1_WEBHOOK_URL: ${SERVER1_WEBHOOK_URL:-http://10.4.160.240:5000/endpoint}
+      SERVER1_RULE_NAME: ${SERVER1_RULE_NAME:-DeviceWebHook Rule Server1}
+      SERVER1_REQUIRES_AUTH: ${SERVER1_REQUIRES_AUTH:-false}
+
+      # Webhook Server2 settings (with authentication)
+      SERVER2_NAME: ${SERVER2_NAME:-Server2}
+      SERVER2_WEBHOOK_NAME: ${SERVER2_WEBHOOK_NAME:-DeviceWebHook_Server2}
+      SERVER2_BASE_URL: ${SERVER2_BASE_URL:-http://10.4.160.240:8081}
+      SERVER2_AUTH_ENDPOINT: ${SERVER2_AUTH_ENDPOINT:-/api/auth/signin}
+      SERVER2_DEVICE_ENDPOINT: ${SERVER2_DEVICE_ENDPOINT:-/device}
+      SERVER2_RULE_NAME: ${SERVER2_RULE_NAME:-DeviceWebHook Rule Server2}
+      SERVER2_REQUIRES_AUTH: ${SERVER2_REQUIRES_AUTH:-true}
+      SERVER2_USERNAME: ${SERVER2_USERNAME:-admin}
+      SERVER2_PASSWORD: ${SERVER2_PASSWORD:-admin}
+
+      # Token settings
+      TOKEN_VALIDITY_SECONDS: ${TOKEN_VALIDITY_SECONDS:-300}
+      TOKEN_BUFFER_SECONDS: ${TOKEN_BUFFER_SECONDS:-30}
+      TOKEN_MAX_RETRIES: ${TOKEN_MAX_RETRIES:-3}
+      TOKEN_RETRY_DELAY_SECONDS: ${TOKEN_RETRY_DELAY_SECONDS:-5}
+    volumes:
+      - ./docker/netpulse-device-mngr/configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+      - ./core/netpulse-device-manager/scripts:/opt/netbox/netbox/scripts:ro
+      - netbox-media:/opt/netbox/netbox/media
+      - netbox-reports:/opt/netbox/netbox/reports
+    ports:
+      - "${DEVICE_MANAGER_PORT:-8000}:8000"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3;if timeout 5 grep -q '\"status\": \"UP\"' <&3; then exit 0; else exit 1; fi"]
+      test: ["CMD", "python", "/opt/netbox/netbox/manage.py", "shell", "-c", "from django.contrib.auth import get_user_model; get_user_model().objects.exists(); print('OK')"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 180s
+
+  # NetBox Worker - Background job processor
+  netbox-worker:
+    image: netpulse/device-manager:${VERSION:-latest}
+    container_name: netpulse-netbox-worker
+    depends_on:
+      - netbox
+      - redis
+    environment:
+      SERVICE_NAME: netbox-worker
+      DB_HOST: postgres
+      DB_NAME: ${NETBOX_DB_NAME:-netbox}
+      DB_USER: ${NETBOX_DB_USER:-netbox}
+      DB_PASSWORD: ${NETBOX_DB_PASSWORD:-netbox123}
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      REDIS_DATABASE: 0
+      REDIS_CACHE_DATABASE: 1
+      SECRET_KEY: ${NETBOX_SECRET_KEY:-cZ75pDscpvtjpWi-yduAbsMg_YZZg-8ulXTW7VxlcAuiGFrNJ9mfnB9brn_3KtocgWU}
+      # Webhook settings for NMSEventRelay script
+      SERVER1_WEBHOOK_URL: ${SERVER1_WEBHOOK_URL:-http://telemetry-automation:5000/endpoint}
+      SERVER2_BASE_URL: ${SERVER2_BASE_URL:-http://nms-server:8081}
+      SERVER2_AUTH_ENDPOINT: ${SERVER2_AUTH_ENDPOINT:-/api/auth/signin}
+      SERVER2_DEVICE_ENDPOINT: ${SERVER2_DEVICE_ENDPOINT:-/device}
+      SERVER2_USERNAME: ${SERVER2_USERNAME:-admin}
+      SERVER2_PASSWORD: ${SERVER2_PASSWORD:-admin}
+    volumes:
+      - ./docker/netpulse-device-mngr/configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+      - ./core/netpulse-device-manager/scripts:/opt/netbox/netbox/scripts:ro
+      - netbox-media:/opt/netbox/netbox/media
+      - netbox-reports:/opt/netbox/netbox/reports
+    command: python /opt/netbox/netbox/manage.py rqworker
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+
+  # NetBox Housekeeping - Scheduled cleanup tasks
+  netbox-housekeeping:
+    image: netpulse/device-manager:${VERSION:-latest}
+    container_name: netpulse-netbox-housekeeping
+    depends_on:
+      - netbox
+    environment:
+      SERVICE_NAME: netbox-housekeeping
+      DB_HOST: postgres
+      DB_NAME: ${NETBOX_DB_NAME:-netbox}
+      DB_USER: ${NETBOX_DB_USER:-netbox}
+      DB_PASSWORD: ${NETBOX_DB_PASSWORD:-netbox123}
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      REDIS_DATABASE: 0
+      REDIS_CACHE_DATABASE: 1
+      SECRET_KEY: ${NETBOX_SECRET_KEY:-cZ75pDscpvtjpWi-yduAbsMg_YZZg-8ulXTW7VxlcAuiGFrNJ9mfnB9brn_3KtocgWU}
+    volumes:
+      - ./docker/netpulse-device-mngr/configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+    command: /bin/sh -c "while true; do python /opt/netbox/netbox/manage.py housekeeping; sleep 86400; done"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+
+  # NetBox Pinger - Device ping monitoring
+  netbox-pinger:
+    image: netpulse/device-manager:${VERSION:-latest}
+    container_name: netpulse-netbox-pinger
+    depends_on:
+      - netbox
+    environment:
+      SERVICE_NAME: netbox-pinger
+      DB_HOST: postgres
+      DB_NAME: ${NETBOX_DB_NAME:-netbox}
+      DB_USER: ${NETBOX_DB_USER:-netbox}
+      DB_PASSWORD: ${NETBOX_DB_PASSWORD:-netbox123}
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      REDIS_DATABASE: 0
+      REDIS_CACHE_DATABASE: 1
+      SECRET_KEY: ${NETBOX_SECRET_KEY:-cZ75pDscpvtjpWi-yduAbsMg_YZZg-8ulXTW7VxlcAuiGFrNJ9mfnB9brn_3KtocgWU}
+    volumes:
+      - ./docker/netpulse-device-mngr/configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+      - ./core/netpulse-device-manager/scripts:/opt/netbox/netbox/scripts:ro
+    command: python /opt/netbox/netbox/manage.py run_pinger
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+
+  # Telemetry Stack - InfluxDB (Custom Go-based)
+  telemetry-influxdb:
+    build:
+      context: .
+      dockerfile: docker/netpulse-telemetry/Dockerfile.influxdb
+      network: host
+    image: netpulse/telemetry-influxdb:${VERSION:-latest}
+    container_name: netpulse-telemetry-influxdb
+    environment:
+      INFLUXDB_URL: ${INFLUXDB_URL:-http://localhost:8181}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-netpulse-token-123}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-netpulse}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-telemetry}
+    volumes:
+      - influxdb-data:/var/lib/influxdb3
+      - influxdb-token:/token
+    ports:
+      - "${TELEMETRY_INFLUXDB_PORT:-8181}:8181"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "sh", "-c", "wget --spider --quiet http://localhost:8181/health 2>&1 || exit 0" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Telemetry Stack - Telegraf
+  telemetry-telegraf:
+    build:
+      context: .
+      dockerfile: docker/netpulse-telemetry/Dockerfile.telegraf
+      network: host
+    image: netpulse/telemetry-telegraf:${VERSION:-latest}
+    container_name: netpulse-telemetry-telegraf
+    depends_on:
+      - telemetry-influxdb
+    environment:
+      INFLUXDB_URL: http://telemetry-influxdb:8181
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-netpulse-token-123}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-netpulse}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-telemetry}
+      TOKEN_FILE: /token/admin-token.json
+    volumes:
+      - influxdb-token:/token:ro
+      - telegraf-configs:/etc/telegraf/telegraf.d
+      - telegraf-cli-scripts:/etc/telegraf/cli-scripts
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+
+  # Telemetry Stack - API (Go-based)
+  telemetry-api:
+    build:
+      context: .
+      dockerfile: docker/netpulse-telemetry/Dockerfile-api
+      network: host
+    image: netpulse/telemetry-api:${VERSION:-latest}
+    container_name: netpulse-telemetry-api
+    depends_on:
+      telemetry-influxdb:
+        condition: service_healthy
+    ports:
+      - 9000:9000
+    environment:
+      # API Configuration
+      - API_PORT=9000
+
+      # InfluxDB Configuration
+      - INFLUXDB_URL=http://telemetry-influxdb:8181
+      - INFLUXDB_DATABASE=router
+      - INFLUXDB_ORG=
+
+      # Token file path
+      - TOKEN_FILE_PATH=/token/admin-token.json
+
+      # Logging
+      - LOG_LEVEL=info
+    volumes:
+      - influxdb-token:/token:ro
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:9000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # Telemetry Stack - Go Webhook Handler
+  telemetry-automation:
+    build:
+      context: .
+      dockerfile: docker/netpulse-telemetry/Dockerfile.automation
+      network: host
+    image: netpulse/telemetry-automation:${VERSION:-latest}
+    container_name: netpulse-telemetry-automation
+    depends_on:
+      - telemetry-telegraf
+    environment:
+      # Webhook port
+      WEBHOOK_PORT: 5000
+      # Telegraf container name for reloading
+      TELEGRAF_CONTAINER_NAME: netpulse-telemetry-telegraf
+      # Telegraf config directories (must match volume mount paths)
+      TELEGRAF_CONFIG_DIR: /telegraf-configs
+      TELEGRAF_CLI_SCRIPT_DIR: /telegraf-cli-scripts
+      # Worker pool configuration
+      MAX_WORKERS: 1000
+      # Logging
+      LOG_LEVEL: info
+      # Database settings
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${NETBOX_DB_USER:-netbox}
+      DB_PASSWORD: ${NETBOX_DB_PASSWORD:-netbox123}
+      DB_NAME: ${NETBOX_DB_NAME:-netbox}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - telegraf-configs:/telegraf-configs
+      - telegraf-cli-scripts:/telegraf-cli-scripts
+    ports:
+      - "${WEBHOOK_PORT:-5000}:5000"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "--quiet", "http://localhost:5000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # API Gateway - Centralized API routing, auth, and RBAC
+  # Supports: Local Auth (NMS Server), LDAP, future TACACS+/RADIUS
+  api-gateway:
+    build:
+      context: ./core/netpulse-api-gateway
+      dockerfile: Dockerfile
+    image: netpulse/api-gateway:${VERSION:-latest}
+    container_name: netpulse-api-gateway
+    depends_on:
+      nms-server:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      # Gateway Configuration
+      GATEWAY_PORT: 8080
+      ENV: ${ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-strong-secret}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-24h}
+
+      # Auth Mode: "first_success" or "primary_fallback"
+      AUTH_MODE: ${AUTH_MODE:-first_success}
+      AUTH_PRIMARY: ${AUTH_PRIMARY:-local}
+
+      # Local Auth (NMS Server) - Enabled by default
+      AUTH_LOCAL_ENABLED: ${AUTH_LOCAL_ENABLED:-true}
+      NMS_SERVER_URL: http://nms-server:8081
+
+      # LDAP Auth - Disabled by default
+      AUTH_LDAP_ENABLED: ${AUTH_LDAP_ENABLED:-false}
+      LDAP_URL: ${LDAP_URL:-}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-}
+      LDAP_USER_FILTER: ${LDAP_USER_FILTER:-(&(objectClass=user)(sAMAccountName=%s))}
+      LDAP_START_TLS: ${LDAP_START_TLS:-false}
+      LDAP_INSECURE_SKIP_TLS: ${LDAP_INSECURE_SKIP_TLS:-false}
+      LDAP_DEFAULT_ROLE: ${LDAP_DEFAULT_ROLE:-VIEWER}
+
+      # TACACS+ Auth - Future (disabled)
+      AUTH_TACACS_ENABLED: ${AUTH_TACACS_ENABLED:-false}
+      TACACS_SERVERS: ${TACACS_SERVERS:-}
+      TACACS_SECRET: ${TACACS_SECRET:-}
+
+      # RADIUS Auth - Future (disabled)
+      AUTH_RADIUS_ENABLED: ${AUTH_RADIUS_ENABLED:-false}
+      RADIUS_AUTH_SERVERS: ${RADIUS_AUTH_SERVERS:-}
+      RADIUS_SECRET: ${RADIUS_SECRET:-}
+
+      # Backend Services
+      NETBOX_URL: http://netbox:8000
+      TELEMETRY_API_URL: http://telemetry-api:9000
+
+      # Redis Configuration
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+
+      # Database Configuration (for RBAC)
+      DATABASE_URL: postgres://${POSTGRES_USER:-netpulse}:${POSTGRES_PASSWORD:-netpulse123}@postgres:5432/netbox
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netpulse123}
+
+      # Rate Limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-1000}
+
+      # GraphQL
+      GRAPHQL_PLAYGROUND: ${GRAPHQL_PLAYGROUND:-false}
+      GRAPHQL_INTROSPECTION: ${GRAPHQL_INTROSPECTION:-false}
+
+      # CORS
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - "${API_GATEWAY_PORT:-8080}:8080"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Keycloak Authentication Server (built from local source)
+  keycloak:
+    build:
+      context: .
+      dockerfile: docker/netpulse-auth/Dockerfile.keycloak
+      network: host
+    image: netpulse/keycloak:${VERSION:-latest}
+    container_name: netpulse-keycloak
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-netpulse}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-netpulse123}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin123}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY: edge
+    command: start-dev --import-realm
+    volumes:
+      - ./config/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloak-data:/opt/keycloak/data
+    ports:
+      - "${KEYCLOAK_PORT:-8082}:8080"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080;echo -e 'GET /health/ready HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3;if timeout 5 grep -q 'UP' <&3; then exit 0; else exit 1; fi"]
       interval: 30s
       timeout: 10s
       retries: 10
       start_period: 60s
 
-  # Kong API Gateway (built from local source, DB-less mode)
+  # Kong API Gateway (built from local source)
   kong:
     build:
-      context: ./kong-source
-      dockerfile: Dockerfile
-    image: netpulse-kong:local
+      context: .
+      dockerfile: docker/netpulse-api-gateway/Dockerfile.kong
+      network: host
+    image: netpulse/kong:${VERSION:-latest}
     container_name: netpulse-kong
     environment:
       KONG_DATABASE: "off"
@@ -78,94 +536,121 @@ services:
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: 0.0.0.0:8001
-      KONG_ADMIN_GUI_URL: http://localhost:8002
       KONG_PLUGINS: bundled
     volumes:
-      - ./kong/kong.yml:/etc/kong/kong.yml:ro
+      - ./config/kong/kong.yml:/etc/kong/kong.yml:ro
     ports:
-      - "8000:8000"   # Proxy
-      - "8443:8443"   # Proxy SSL
-      - "8001:8001"   # Admin API
-      - "8444:8444"   # Admin SSL
-      - "8002:8002"   # Kong Manager
+      - "${KONG_PROXY_PORT:-18000}:8000"
+      - "${KONG_PROXY_SSL_PORT:-18443}:8443"
+      - "${KONG_ADMIN_PORT:-18001}:8001"
+      - "${KONG_ADMIN_SSL_PORT:-18444}:8444"
     networks:
-      - netpulse-auth-network
+      - netpulse-network
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "kong", "health"]
       interval: 30s
       timeout: 10s
       retries: 5
 
-  # Mock NMS Server Service (internal only - accessed via Kong)
-  nms-server:
+  # Main Frontend Application
+  frontend:
     build:
-      context: ./services/nms-server
-      dockerfile: Dockerfile
-    container_name: netpulse-mock-nms-server
-    # No ports exposed - internal only
-    networks:
-      - netpulse-auth-network
-    environment:
-      SERVICE_NAME: nms-server
-      SERVICE_PORT: 8080
-
-  # Mock Telegraf API Service (internal only - accessed via Kong)
-  telegraf-api:
-    build:
-      context: ./services/telegraf-api
-      dockerfile: Dockerfile
-    container_name: netpulse-mock-telegraf-api
-    # No ports exposed - internal only
-    networks:
-      - netpulse-auth-network
-    environment:
-      SERVICE_NAME: telegraf-api
-      SERVICE_PORT: 8080
-
-  # Mock NetBox API Service (internal only - accessed via Kong)
-  netbox-api:
-    build:
-      context: ./services/netbox-api
-      dockerfile: Dockerfile
-    container_name: netpulse-mock-netbox-api
-    # No ports exposed - internal only
-    networks:
-      - netpulse-auth-network
-    environment:
-      SERVICE_NAME: netbox-api
-      SERVICE_PORT: 8080
-
-  # OpenLDAP for LDAP Integration
-  openldap:
-    image: osixia/openldap:1.5.0
-    container_name: netpulse-openldap
-    environment:
-      LDAP_ORGANISATION: "NetPulse"
-      LDAP_DOMAIN: "netpulse.local"
-      LDAP_ADMIN_PASSWORD: "admin123"
-      LDAP_CONFIG_PASSWORD: "config123"
-      LDAP_READONLY_USER: "true"
-      LDAP_READONLY_USER_USERNAME: "readonly"
-      LDAP_READONLY_USER_PASSWORD: "readonly123"
-    ports:
-      - "389:389"
-      - "636:636"
-    volumes:
-      - ./ldap/bootstrap.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/bootstrap.ldif
-    networks:
-      - netpulse-auth-network
-    command: --copy-service
-
-  # phpLDAPadmin for LDAP management (optional)
-  phpldapadmin:
-    image: osixia/phpldapadmin:0.9.0
-    container_name: netpulse-phpldapadmin
-    environment:
-      PHPLDAPADMIN_LDAP_HOSTS: openldap
-      PHPLDAPADMIN_HTTPS: "false"
-    ports:
-      - "8090:80"
-    networks:
-      - netpulse-auth-network
+      context: ./netpulse-frontend
+      dockerfile: ../docker/netpulse-frontend/Dockerfile
+      network: host
+      args:
+        VITE_APP_API_URL: ${VITE_APP_API_URL:-http://${NETPULSE_HOST_IP:-10.4.160.240}:8081}
+        VITE_APP_IP: ${VITE_APP_IP:-${NETPULSE_HOST_IP:-10.4.160.240}}
+        VITE_APP_PROTOCOL: ${VITE_APP_PROTOCOL:-http}
+    image: netpulse/frontend${client}:${VERSION:-latest}
+    container_name: netpulse-frontend
     depends_on:
-      - openldap
+      - nms-server
+    environment:
+      VITE_APP_API_URL: ${VITE_APP_API_URL:-http://${NETPULSE_HOST_IP:-10.4.160.240}:8081}
+      VITE_APP_IP: ${VITE_APP_IP:-${NETPULSE_HOST_IP:-10.4.160.240}}
+      VITE_APP_PROTOCOL: ${VITE_APP_PROTOCOL:-http}
+      CLIENT_ID: ${CLIENT_ID:-default}
+      VITE_CLIENT_ID: ${CLIENT_ID:-default}
+    volumes:
+      - ./netpulse-frontend:/app
+      - /app/node_modules
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    networks:
+      - netpulse-network
+    restart: unless-stopped
+  # DHCP Autodiscovery Agent - Device auto-discovery via DHCP webhook
+  dhcp-autodiscovery:
+    build:
+      context: ./core/netpulse-device-manager/agent
+      dockerfile: ../../../docker/DHCP-autodiscovery/Dockerfile
+      network: host
+    image: netpulse/dhcp-autodiscovery:${VERSION:-latest}
+    container_name: netpulse-dhcp-autodiscovery
+    depends_on:
+      netbox:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${DHCP_AGENT_PORT:-5050}:5050"
+    volumes:
+      - dhcp-agent-config:/app/config
+      - dhcp-agent-logs:/app/logs
+    environment:
+      # NetBox/Inventory settings
+      INVENTORY_URL: ${INVENTORY_URL:-http://netpulse-netbox:8000}
+      INVENTORY_TOKEN: ${INVENTORY_TOKEN:-1e9b1b1366229ad519719cae5974353e0403267f}
+      INVENTORY_SCRIPT_PATH: ${INVENTORY_SCRIPT_PATH:-/api/extras/scripts/addDevice/}
+      # NMS settings
+      NMS_HOST: ${NMS_HOST:-0.0.0.0}
+      NMS_PORT: ${NMS_PORT:-5050}
+      AUTHORIZED_ADMIN_IPS: ${AUTHORIZED_ADMIN_IPS:-192.168.10.1}
+      # Postgres Database configuration (connecting to central netpulse-postgres)
+      DB_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-netpulse}
+      POSTGRES_USER: ${POSTGRES_USER:-netpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netpulse123}
+      POSTGRES_PORT: 5432
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - netpulse-network
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  influxdb-data:
+    driver: local
+  influxdb-token:
+    driver: local
+  telegraf-configs:
+    driver: local
+  telegraf-cli-scripts:
+    driver: local
+  netbox-media:
+    driver: local
+  netbox-reports:
+    driver: local
+  nms-server-logs:
+    driver: local
+  dhcp-agent-config:
+    driver: local
+  dhcp-agent-logs:
+    driver: local
+  keycloak-data:
+    driver: local
+
+networks:
+  netpulse-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

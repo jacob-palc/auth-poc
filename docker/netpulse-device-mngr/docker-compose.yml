@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  netbox:
+    build:
+      context: ../..
+      dockerfile: docker/netpulse-device-mngr/Dockerfile
+    container_name: netbox
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    volumes:
+      - ./configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+      - netbox-media:/opt/netbox/netbox/media
+      - netbox-reports:/opt/netbox/netbox/reports
+      - netbox-scripts:/opt/netbox/netbox/scripts
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - netbox-network
+
+  netbox-worker:
+    build:
+      context: ../..
+      dockerfile: docker/netpulse-device-mngr/Dockerfile
+    container_name: netbox-worker
+    depends_on:
+      - netbox
+      - redis
+    env_file:
+      - .env
+    volumes:
+      - ./configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+      - netbox-media:/opt/netbox/netbox/media
+      - netbox-reports:/opt/netbox/netbox/reports
+      - netbox-scripts:/opt/netbox/netbox/scripts
+    command: python /opt/netbox/netbox/manage.py rqworker
+    restart: unless-stopped
+    networks:
+      - netbox-network
+
+  netbox-housekeeping:
+    build:
+      context: ../..
+      dockerfile: docker/netpulse-device-mngr/Dockerfile
+    container_name: netbox-housekeeping
+    depends_on:
+      - netbox
+    env_file:
+      - .env
+    volumes:
+      - ./configuration.py:/opt/netbox/netbox/netbox/configuration.py:ro
+    command: /bin/sh -c "while true; do python /opt/netbox/netbox/manage.py housekeeping; sleep 86400; done"
+    restart: unless-stopped
+    networks:
+      - netbox-network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: netbox-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-netbox}
+      POSTGRES_USER: ${DB_USER:-netbox}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-netbox}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - netbox-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: netbox-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - netbox-network
+
+volumes:
+  postgres-data:
+  redis-data:
+  netbox-media:
+  netbox-reports:
+  netbox-scripts:
+
+networks:
+  netbox-network:
+    driver: bridge

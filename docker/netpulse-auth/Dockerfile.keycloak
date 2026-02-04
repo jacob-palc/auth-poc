@@ -1,0 +1,40 @@
+# Keycloak Dockerfile - Built from local source
+# Uses the pre-built distribution from keycloak-source/quarkus/dist/target/
+
+FROM eclipse-temurin:21-jre-alpine
+
+ENV KC_HOME=/opt/keycloak
+ENV PATH="${KC_HOME}/bin:${PATH}"
+
+# Install required packages
+RUN apk add --no-cache \
+    bash \
+    curl \
+    openssl
+
+# Create keycloak user and group
+RUN addgroup -g 1000 keycloak && \
+    adduser -u 1000 -G keycloak -h ${KC_HOME} -D keycloak
+
+WORKDIR ${KC_HOME}
+
+# Copy the pre-built Keycloak distribution
+COPY keycloak-source/quarkus/dist/target/keycloak-999.0.0-SNAPSHOT.tar.gz /tmp/keycloak.tar.gz
+
+# Extract and setup Keycloak
+RUN tar -xzf /tmp/keycloak.tar.gz -C /opt && \
+    mv /opt/keycloak-999.0.0-SNAPSHOT/* ${KC_HOME}/ && \
+    rmdir /opt/keycloak-999.0.0-SNAPSHOT && \
+    rm /tmp/keycloak.tar.gz && \
+    chown -R keycloak:keycloak ${KC_HOME}
+
+# Create data directories
+RUN mkdir -p ${KC_HOME}/data/import && \
+    chown -R keycloak:keycloak ${KC_HOME}/data
+
+USER keycloak
+
+EXPOSE 8080 8443
+
+ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]
+CMD ["start-dev"]
