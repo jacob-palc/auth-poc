@@ -6,16 +6,15 @@ FROM kong:2.5 AS builder
 
 USER root
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+# Install build dependencies (Alpine uses apk)
+RUN apk add --no-cache \
+    build-base \
     git \
     unzip \
     curl \
-    libpcre3-dev \
-    zlib1g-dev \
-    libyaml-dev \
-    && rm -rf /var/lib/apt/lists/*
+    pcre-dev \
+    zlib-dev \
+    yaml-dev
 
 # Set working directory for build
 WORKDIR /build
