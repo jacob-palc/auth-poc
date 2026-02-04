@@ -1,0 +1,231 @@
+_format_version: "3.0"
+_transform: true
+
+# ============================================
+# Services
+# ============================================
+services:
+  # API Gateway Health/Info endpoint (PUBLIC)
+  - name: gateway-health
+    url: http://nms-server:8080
+    routes:
+      - name: gateway-root
+        paths:
+          - /
+        strip_path: false
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 200
+          content_type: "application/json"
+          body: '{"service":"netpulse-api-gateway","status":"healthy","version":"1.0.0","endpoints":{"/auth":"Keycloak Authentication (public)","/nms":"NMS Server API (protected)","/telegraf":"Telegraf Metrics API (protected)","/netbox":"NetBox Device API (protected)"},"auth":{"token_endpoint":"/auth/realms/netpulse/protocol/openid-connect/token","method":"POST","body":"client_id=netpulse-gateway&client_secret=netpulse-gateway-secret&username=<user>&password=<pass>&grant_type=password"}}'
+
+  # Keycloak Auth Service (PUBLIC - for authentication)
+  - name: keycloak
+    url: http://keycloak:8080
+    routes:
+      - name: keycloak-route
+        paths:
+          - /auth
+        strip_path: true
+        preserve_host: false
+
+  # NMS Server Service (PROTECTED - requires valid JWT)
+  - name: nms-server
+    url: http://nms-server:8080
+    routes:
+      - name: nms-server-route
+        paths:
+          - /nms
+        strip_path: true
+    plugins:
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:nms-server"
+      - name: pre-function
+        config:
+          access:
+            - |
+              local auth_header = kong.request.get_header("Authorization")
+              if not auth_header then
+                return kong.response.exit(401, { error = "unauthorized", message = "Missing Authorization header", hint = "POST /auth/realms/netpulse/protocol/openid-connect/token" })
+              end
+              if not auth_header:match("^Bearer ") then
+                return kong.response.exit(401, { error = "unauthorized", message = "Use: Bearer <token>" })
+              end
+              local token = auth_header:sub(8)
+              if not token or token == "" or token == "YOUR_TOKEN" or #token < 100 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT token" })
+              end
+              local dot1 = token:find("%.")
+              if not dot1 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT: missing parts" })
+              end
+              local dot2 = token:find("%.", dot1 + 1)
+              if not dot2 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT: must have 3 parts" })
+              end
+              local payload_b64 = token:sub(dot1 + 1, dot2 - 1)
+              local padding = 4 - (#payload_b64 % 4)
+              if padding ~= 4 then
+                payload_b64 = payload_b64 .. string.rep("=", padding)
+              end
+              payload_b64 = payload_b64:gsub("-", "+"):gsub("_", "/")
+              local payload_json = ngx.decode_base64(payload_b64)
+              if not payload_json then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT: decode failed" })
+              end
+              local exp_match = payload_json:match('"exp":(%d+)')
+              if exp_match then
+                local exp = tonumber(exp_match)
+                if exp and exp < ngx.time() then
+                  return kong.response.exit(401, { error = "unauthorized", message = "Token expired" })
+                end
+              end
+              if not payload_json:match("netpulse") then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid token issuer" })
+              end
+              local username = payload_json:match('"preferred_username":"([^"]+)"')
+              if username then
+                kong.service.request.set_header("X-User-Name", username)
+              end
+              local email = payload_json:match('"email":"([^"]+)"')
+              if email then
+                kong.service.request.set_header("X-User-Email", email)
+              end
+
+  # Telegraf API Service (PROTECTED)
+  - name: telegraf-api
+    url: http://telegraf-api:8080
+    routes:
+      - name: telegraf-api-route
+        paths:
+          - /telegraf
+        strip_path: true
+    plugins:
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:telegraf-api"
+      - name: pre-function
+        config:
+          access:
+            - |
+              local auth_header = kong.request.get_header("Authorization")
+              if not auth_header then
+                return kong.response.exit(401, { error = "unauthorized", message = "Missing Authorization header" })
+              end
+              if not auth_header:match("^Bearer ") then
+                return kong.response.exit(401, { error = "unauthorized", message = "Use: Bearer <token>" })
+              end
+              local token = auth_header:sub(8)
+              if not token or #token < 100 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT token" })
+              end
+              local dot1 = token:find("%.")
+              local dot2 = dot1 and token:find("%.", dot1 + 1)
+              if not dot2 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT format" })
+              end
+              local payload_b64 = token:sub(dot1 + 1, dot2 - 1)
+              local padding = 4 - (#payload_b64 % 4)
+              if padding ~= 4 then payload_b64 = payload_b64 .. string.rep("=", padding) end
+              payload_b64 = payload_b64:gsub("-", "+"):gsub("_", "/")
+              local payload_json = ngx.decode_base64(payload_b64)
+              if not payload_json then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT" })
+              end
+              local exp_match = payload_json:match('"exp":(%d+)')
+              if exp_match and tonumber(exp_match) < ngx.time() then
+                return kong.response.exit(401, { error = "unauthorized", message = "Token expired" })
+              end
+              local username = payload_json:match('"preferred_username":"([^"]+)"')
+              if username then kong.service.request.set_header("X-User-Name", username) end
+
+  # NetBox API Service (PROTECTED)
+  - name: netbox-api
+    url: http://netbox-api:8080
+    routes:
+      - name: netbox-api-route
+        paths:
+          - /netbox
+        strip_path: true
+    plugins:
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:netbox-api"
+      - name: pre-function
+        config:
+          access:
+            - |
+              local auth_header = kong.request.get_header("Authorization")
+              if not auth_header then
+                return kong.response.exit(401, { error = "unauthorized", message = "Missing Authorization header" })
+              end
+              if not auth_header:match("^Bearer ") then
+                return kong.response.exit(401, { error = "unauthorized", message = "Use: Bearer <token>" })
+              end
+              local token = auth_header:sub(8)
+              if not token or #token < 100 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT token" })
+              end
+              local dot1 = token:find("%.")
+              local dot2 = dot1 and token:find("%.", dot1 + 1)
+              if not dot2 then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT format" })
+              end
+              local payload_b64 = token:sub(dot1 + 1, dot2 - 1)
+              local padding = 4 - (#payload_b64 % 4)
+              if padding ~= 4 then payload_b64 = payload_b64 .. string.rep("=", padding) end
+              payload_b64 = payload_b64:gsub("-", "+"):gsub("_", "/")
+              local payload_json = ngx.decode_base64(payload_b64)
+              if not payload_json then
+                return kong.response.exit(401, { error = "unauthorized", message = "Invalid JWT" })
+              end
+              local exp_match = payload_json:match('"exp":(%d+)')
+              if exp_match and tonumber(exp_match) < ngx.time() then
+                return kong.response.exit(401, { error = "unauthorized", message = "Token expired" })
+              end
+              local username = payload_json:match('"preferred_username":"([^"]+)"')
+              if username then kong.service.request.set_header("X-User-Name", username) end
+
+# ============================================
+# Global Plugins
+# ============================================
+plugins:
+  - name: rate-limiting
+    config:
+      minute: 100
+      policy: local
+
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Authorization
+        - Content-Type
+      exposed_headers:
+        - X-Auth-Token
+      credentials: true
+      max_age: 3600
+
+  - name: file-log
+    config:
+      path: /dev/stdout
+
+consumers:
+  - username: keycloak
+    custom_id: keycloak-client

@@ -1,0 +1,65 @@
+# Kong Dockerfile - Built from local source
+# Multi-stage build using Kong base image with OpenResty
+
+# Stage 1: Build Kong from source
+FROM kong:2.5 AS builder
+
+USER root
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    unzip \
+    curl \
+    libpcre3-dev \
+    zlib1g-dev \
+    libyaml-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory for build
+WORKDIR /build
+
+# Copy the entire Kong source code
+COPY . /build/kong-source/
+
+# Install Kong from local source using luarocks
+WORKDIR /build/kong-source
+RUN luarocks make kong-2.5.2-0.rockspec \
+    OPENSSL_DIR=/usr/local/kong \
+    CRYPTO_DIR=/usr/local/kong
+
+# Stage 2: Final runtime image
+FROM kong:2.5
+
+USER root
+
+# Copy the installed Kong Lua modules from builder
+COPY --from=builder /usr/local/share/lua/5.1/kong /usr/local/share/lua/5.1/kong
+COPY --from=builder /usr/local/lib/luarocks/rocks-5.1/kong /usr/local/lib/luarocks/rocks-5.1/kong
+
+# Copy the Kong binary scripts
+COPY --from=builder /build/kong-source/bin/kong /usr/local/bin/kong
+
+# Ensure proper ownership
+RUN chown -R kong:kong /usr/local/share/lua/5.1/kong
+
+# Switch back to kong user
+USER kong
+
+# Default environment variables
+ENV KONG_DATABASE=off \
+    KONG_PROXY_ACCESS_LOG=/dev/stdout \
+    KONG_ADMIN_ACCESS_LOG=/dev/stdout \
+    KONG_PROXY_ERROR_LOG=/dev/stderr \
+    KONG_ADMIN_ERROR_LOG=/dev/stderr \
+    KONG_ADMIN_LISTEN=0.0.0.0:8001
+
+EXPOSE 8000 8443 8001 8444
+
+STOPSIGNAL SIGQUIT
+
+HEALTHCHECK --interval=10s --timeout=10s --retries=10 \
+    CMD kong health
+
+CMD ["kong", "docker-start"]
