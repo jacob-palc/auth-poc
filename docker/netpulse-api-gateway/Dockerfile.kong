@@ -40,8 +40,9 @@ COPY --from=builder /usr/local/lib/luarocks/rocks-5.1/kong /usr/local/lib/luaroc
 # Copy the Kong binary scripts
 COPY --from=builder /build/kong-source/bin/kong /usr/local/bin/kong
 
-# Ensure proper ownership
-RUN chown -R kong:kong /usr/local/share/lua/5.1/kong
+# Ensure proper ownership and permissions
+RUN chown -R kong:kong /usr/local/share/lua/5.1/kong && \
+    chmod +x /usr/local/bin/kong
 
 # Switch back to kong user
 USER kong

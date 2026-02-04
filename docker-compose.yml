@@ -650,6 +650,9 @@ volumes:
 
 networks:
   netpulse-network:
+    external: true
+    name: netpulse_netpulse-network
+#
     driver: bridge
     ipam:
       config:
