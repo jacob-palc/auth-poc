@@ -1,0 +1,97 @@
+# Organization Units
+dn: ou=users,dc=netpulse,dc=local
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=netpulse,dc=local
+objectClass: organizationalUnit
+ou: groups
+
+# Users
+dn: uid=ldap-admin,ou=users,dc=netpulse,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: LDAP Admin
+sn: Admin
+givenName: LDAP
+uid: ldap-admin
+mail: ldap-admin@netpulse.local
+userPassword: ldapadmin123
+
+dn: uid=ldap-operator,ou=users,dc=netpulse,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: LDAP Operator
+sn: Operator
+givenName: LDAP
+uid: ldap-operator
+mail: ldap-operator@netpulse.local
+userPassword: ldapoperator123
+
+dn: uid=ldap-viewer,ou=users,dc=netpulse,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: LDAP Viewer
+sn: Viewer
+givenName: LDAP
+uid: ldap-viewer
+mail: ldap-viewer@netpulse.local
+userPassword: ldapviewer123
+
+dn: uid=john.doe,ou=users,dc=netpulse,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: John Doe
+sn: Doe
+givenName: John
+uid: john.doe
+mail: john.doe@netpulse.local
+userPassword: john123
+
+dn: uid=jane.smith,ou=users,dc=netpulse,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+cn: Jane Smith
+sn: Smith
+givenName: Jane
+uid: jane.smith
+mail: jane.smith@netpulse.local
+userPassword: jane123
+
+# Groups
+dn: cn=admins,ou=groups,dc=netpulse,dc=local
+objectClass: groupOfNames
+cn: admins
+member: uid=ldap-admin,ou=users,dc=netpulse,dc=local
+
+dn: cn=operators,ou=groups,dc=netpulse,dc=local
+objectClass: groupOfNames
+cn: operators
+member: uid=ldap-operator,ou=users,dc=netpulse,dc=local
+member: uid=john.doe,ou=users,dc=netpulse,dc=local
+
+dn: cn=viewers,ou=groups,dc=netpulse,dc=local
+objectClass: groupOfNames
+cn: viewers
+member: uid=ldap-viewer,ou=users,dc=netpulse,dc=local
+member: uid=jane.smith,ou=users,dc=netpulse,dc=local
+
+dn: cn=nms-team,ou=groups,dc=netpulse,dc=local
+objectClass: groupOfNames
+cn: nms-team
+member: uid=john.doe,ou=users,dc=netpulse,dc=local
+
+dn: cn=network-team,ou=groups,dc=netpulse,dc=local
+objectClass: groupOfNames
+cn: network-team
+member: uid=jane.smith,ou=users,dc=netpulse,dc=local

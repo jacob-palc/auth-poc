@@ -1,0 +1,22 @@
+Manifest-Version: 1.0
+Created-By: Maven Archiver 3.4.0
+Build-Jdk-Spec: 21
+Specification-Title: Keycloak Quarkus Server Extension
+Specification-Version: 999.0
+Specification-Vendor: JBoss by Red Hat
+Implementation-Title: Keycloak Quarkus Server Extension
+Implementation-Version: 999.0.0-SNAPSHOT
+Implementation-Vendor: JBoss by Red Hat
+Implementation-URL: http://keycloak.org/keycloak-quarkus-parent/keycloak
+ -quarkus-server
+Java-Vendor: Eclipse Adoptium
+Java-Version: 21.0.9
+Os-Arch: amd64
+Os-Name: Windows 10
+Os-Version: 10.0
+Scm-Connection: scm:git:git://github.com/keycloak/keycloak.git/keycloak-
+ quarkus-parent/keycloak-quarkus-server
+Scm-Revision: af44f6961a603dad9f5f399ae700976918cdd683
+Scm-Url: https://github.com/keycloak/keycloak/tree/master/keycloak-quark
+ us-parent/keycloak-quarkus-server/
+

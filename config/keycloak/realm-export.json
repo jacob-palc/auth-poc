@@ -1,0 +1,392 @@
+{
+  "realm": "netpulse",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Full administrative access to all services"
+      },
+      {
+        "name": "operator",
+        "description": "Can view and operate services but not configure"
+      },
+      {
+        "name": "viewer",
+        "description": "Read-only access to services"
+      },
+      {
+        "name": "nms-admin",
+        "description": "Admin access to NMS Server"
+      },
+      {
+        "name": "nms-user",
+        "description": "User access to NMS Server"
+      },
+      {
+        "name": "telegraf-admin",
+        "description": "Admin access to Telegraf API"
+      },
+      {
+        "name": "telegraf-user",
+        "description": "User access to Telegraf API"
+      },
+      {
+        "name": "netbox-admin",
+        "description": "Admin access to NetBox API"
+      },
+      {
+        "name": "netbox-user",
+        "description": "User access to NetBox API"
+      }
+    ],
+    "client": {
+      "netpulse-gateway": [
+        {
+          "name": "gateway-admin",
+          "description": "Admin role for API Gateway"
+        },
+        {
+          "name": "gateway-user",
+          "description": "User role for API Gateway"
+        }
+      ]
+    }
+  },
+  "groups": [
+    {
+      "name": "Administrators",
+      "path": "/Administrators",
+      "realmRoles": ["admin", "nms-admin", "telegraf-admin", "netbox-admin"]
+    },
+    {
+      "name": "Operators",
+      "path": "/Operators",
+      "realmRoles": ["operator", "nms-user", "telegraf-user", "netbox-user"]
+    },
+    {
+      "name": "Viewers",
+      "path": "/Viewers",
+      "realmRoles": ["viewer"]
+    },
+    {
+      "name": "NMS-Team",
+      "path": "/NMS-Team",
+      "realmRoles": ["nms-admin", "telegraf-user"]
+    },
+    {
+      "name": "Network-Team",
+      "path": "/Network-Team",
+      "realmRoles": ["netbox-admin", "nms-user"]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "email": "admin@netpulse.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["admin", "nms-admin", "telegraf-admin", "netbox-admin"],
+      "groups": ["/Administrators"]
+    },
+    {
+      "username": "operator",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Operator",
+      "lastName": "User",
+      "email": "operator@netpulse.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "operator123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["operator", "nms-user", "telegraf-user", "netbox-user"],
+      "groups": ["/Operators"]
+    },
+    {
+      "username": "viewer",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Viewer",
+      "lastName": "User",
+      "email": "viewer@netpulse.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "viewer123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["viewer"],
+      "groups": ["/Viewers"]
+    },
+    {
+      "username": "nms-engineer",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "NMS",
+      "lastName": "Engineer",
+      "email": "nms-engineer@netpulse.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nms123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["nms-admin", "telegraf-user"],
+      "groups": ["/NMS-Team"]
+    },
+    {
+      "username": "network-engineer",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Network",
+      "lastName": "Engineer",
+      "email": "network-engineer@netpulse.local",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "network123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["netbox-admin", "nms-user"],
+      "groups": ["/Network-Team"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "netpulse-gateway",
+      "name": "NetPulse API Gateway",
+      "description": "Kong API Gateway Client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "netpulse-gateway-secret",
+      "redirectUris": [
+        "http://localhost:8000/*",
+        "http://localhost:8001/*"
+      ],
+      "webOrigins": ["*"],
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "groups-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "netpulse-gateway",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "netpulse-frontend",
+      "name": "NetPulse Frontend",
+      "description": "Frontend Application Client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": ["*"],
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "roles",
+        "profile",
+        "email"
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.storage.UserStorageProvider": [
+      {
+        "name": "ldap",
+        "providerId": "ldap",
+        "subComponents": {
+          "org.keycloak.storage.ldap.mappers.LDAPStorageMapper": [
+            {
+              "name": "username",
+              "providerId": "user-attribute-ldap-mapper",
+              "config": {
+                "ldap.attribute": ["uid"],
+                "is.mandatory.in.ldap": ["true"],
+                "read.only": ["false"],
+                "always.read.value.from.ldap": ["false"],
+                "user.model.attribute": ["username"]
+              }
+            },
+            {
+              "name": "email",
+              "providerId": "user-attribute-ldap-mapper",
+              "config": {
+                "ldap.attribute": ["mail"],
+                "is.mandatory.in.ldap": ["false"],
+                "read.only": ["false"],
+                "always.read.value.from.ldap": ["false"],
+                "user.model.attribute": ["email"]
+              }
+            },
+            {
+              "name": "first name",
+              "providerId": "user-attribute-ldap-mapper",
+              "config": {
+                "ldap.attribute": ["givenName"],
+                "is.mandatory.in.ldap": ["false"],
+                "read.only": ["false"],
+                "always.read.value.from.ldap": ["false"],
+                "user.model.attribute": ["firstName"]
+              }
+            },
+            {
+              "name": "last name",
+              "providerId": "user-attribute-ldap-mapper",
+              "config": {
+                "ldap.attribute": ["sn"],
+                "is.mandatory.in.ldap": ["false"],
+                "read.only": ["false"],
+                "always.read.value.from.ldap": ["false"],
+                "user.model.attribute": ["lastName"]
+              }
+            },
+            {
+              "name": "group-ldap-mapper",
+              "providerId": "group-ldap-mapper",
+              "config": {
+                "groups.dn": ["ou=groups,dc=netpulse,dc=local"],
+                "group.name.ldap.attribute": ["cn"],
+                "group.object.classes": ["groupOfNames"],
+                "preserve.group.inheritance": ["true"],
+                "membership.ldap.attribute": ["member"],
+                "membership.user.ldap.attribute": ["uid"],
+                "membership.attribute.type": ["DN"],
+                "mode": ["READ_ONLY"],
+                "drop.non.existing.groups.during.sync": ["false"]
+              }
+            }
+          ]
+        },
+        "config": {
+          "enabled": ["true"],
+          "priority": ["0"],
+          "fullSyncPeriod": ["-1"],
+          "changedSyncPeriod": ["-1"],
+          "cachePolicy": ["DEFAULT"],
+          "editMode": ["READ_ONLY"],
+          "importEnabled": ["true"],
+          "syncRegistrations": ["false"],
+          "vendor": ["other"],
+          "usernameLDAPAttribute": ["uid"],
+          "rdnLDAPAttribute": ["uid"],
+          "uuidLDAPAttribute": ["entryUUID"],
+          "userObjectClasses": ["inetOrgPerson, organizationalPerson"],
+          "connectionUrl": ["ldap://openldap:389"],
+          "usersDn": ["ou=users,dc=netpulse,dc=local"],
+          "authType": ["simple"],
+          "bindDn": ["cn=admin,dc=netpulse,dc=local"],
+          "bindCredential": ["admin123"],
+          "searchScope": ["1"],
+          "validatePasswordPolicy": ["false"],
+          "trustEmail": ["false"],
+          "useTruststoreSpi": ["ldapsOnly"],
+          "connectionPooling": ["true"],
+          "pagination": ["true"],
+          "allowKerberosAuthentication": ["false"],
+          "batchSizeForSync": ["1000"],
+          "debug": ["false"]
+        }
+      }
+    ]
+  },
+  "defaultDefaultClientScopes": [
+    "role_list",
+    "profile",
+    "email",
+    "roles",
+    "web-origins",
+    "acr"
+  ],
+  "defaultOptionalClientScopes": [
+    "offline_access",
+    "address",
+    "phone",
+    "microprofile-jwt"
+  ]
+}

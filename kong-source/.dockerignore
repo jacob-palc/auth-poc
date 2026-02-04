@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+.github/
+
+# CI/CD
+.ci/
+.travis.yml
+Jenkinsfile
+
+# Documentation
+*.md
+docs/
+autodoc/
+
+# Tests
+spec/
+t/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Build artifacts
+*.rock
+*.src.rock
+
+# Vagrant
+Vagrantfile
+.vagrant/

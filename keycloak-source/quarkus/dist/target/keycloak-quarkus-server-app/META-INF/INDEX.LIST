@@ -1,0 +1,9 @@
+JarIndex-Version: 1.0
+
+keycloak.jar
+META-INF
+META-INF/maven
+META-INF/maven/org.keycloak
+META-INF/maven/org.keycloak/keycloak-quarkus-server-app
+application.properties
+
