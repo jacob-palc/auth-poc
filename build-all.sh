@@ -38,7 +38,7 @@ DRY_RUN=false
 SKIP_SUBMODULES=false
 BUILD_ACTION=false
 AUTO_DEPLOY=true
-COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"
+COMPOSE_FILES="-f docker-compose.yml"
 BUILD_LOG="${ROOT_DIR}/build.log"
 VERSION="${VERSION:-latest}"
 SELECTED_SERVICES=()  # Array to hold specific services to build
@@ -143,7 +143,7 @@ Options:
   --no-cache               Build without using Docker cache
   --skip-submodules        Skip Git submodule initialization
   --no-deploy              Skip automatic deployment after build
-  --compose-file <files>   Compose files to use (default: "-f docker-compose.yml -f docker-compose.dev.yml")
+  --compose-file <files>   Compose files to use (default: "-f docker-compose.yml")
 
 Environment Variables:
   VERSION                  Image version tag (default: latest)
